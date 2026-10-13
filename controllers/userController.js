@@ -12,7 +12,6 @@ const formatUserResponse = (user) => {
     role: user.role,
     isEmailVerified: user.isEmailVerified,
     avatar: user.avatar || '',
-    addresses: user.addresses || [],
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -51,13 +50,12 @@ export const getMyProfile = async (req, res) => {
  */
 export const updateMyProfile = async (req, res) => {
   try {
-    const { fullName, phone, avatar, addresses } = req.body;
+    const { fullName, phone, avatar } = req.body;
     const user = req.user;
 
     if (fullName) user.fullName = fullName.trim();
     if (phone !== undefined) user.phone = phone.trim();
     if (avatar !== undefined) user.avatar = avatar;
-    if (addresses && Array.isArray(addresses)) user.addresses = addresses;
 
     await user.save();
 

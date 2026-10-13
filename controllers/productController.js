@@ -1,5 +1,39 @@
 import Product from '../models/Product.js';
 import Category from '../models/Category.js';
+import Wishlist from '../models/Wishlist.js';
+
+/**
+ * Attach isInWishlist boolean to product object(s) based on user's active wishlist
+ */
+const attachWishlistFlag = async (products, userId) => {
+  if (!products) return products;
+
+  let wishlistProductIds = new Set();
+  if (userId) {
+    const wishlist = await Wishlist.findOne({ user: userId }).select('products.product').lean();
+    if (wishlist?.products) {
+      wishlistProductIds = new Set(
+        wishlist.products.map((item) => item.product.toString())
+      );
+    }
+  }
+
+  const formatOne = (product) => {
+    if (!product) return null;
+    const pObj = product.toObject ? product.toObject() : { ...product };
+    const pId = (pObj._id || pObj.id || '').toString();
+    return {
+      ...pObj,
+      id: pObj._id || pObj.id,
+      isInWishlist: wishlistProductIds.has(pId),
+    };
+  };
+
+  if (Array.isArray(products)) {
+    return products.map(formatOne);
+  }
+  return formatOne(products);
+};
 
 /**
  * Generate a URL-friendly slug from string
@@ -12,6 +46,31 @@ const generateSlug = (text) => {
     .replace(/\s+/g, '-')
     .replace(/[^\w\-]+/g, '')
     .replace(/\-\-+/g, '-');
+};
+
+/**
+ * Construct full public URL for an uploaded file
+ */
+const buildFileUrl = (req, filename) => {
+  if (!filename) return '';
+  const baseUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+  return `${baseUrl}/uploads/products/${filename}`;
+};
+
+/**
+ * Safely parse JSON or return fallback
+ */
+const parseJsonField = (val, defaultValue) => {
+  if (val === undefined || val === null) return defaultValue;
+  if (typeof val === 'object') return val;
+  if (typeof val === 'string') {
+    try {
+      return JSON.parse(val);
+    } catch {
+      return val;
+    }
+  }
+  return val;
 };
 
 /**
@@ -132,9 +191,11 @@ export const getProducts = async (req, res) => {
       Product.countDocuments(query),
     ]);
 
+    const enrichedProducts = await attachWishlistFlag(products, req.user?._id);
+
     res.status(200).json({
       success: true,
-      data: products,
+      data: enrichedProducts,
       pagination: {
         total,
         page: pageNum,
@@ -179,9 +240,11 @@ export const getProductByIdOrSlug = async (req, res) => {
       });
     }
 
+    const enrichedProduct = await attachWishlistFlag(product, req.user?._id);
+
     res.status(200).json({
       success: true,
-      data: product,
+      data: enrichedProduct,
     });
   } catch (error) {
     console.error('[Product Controller - getProductByIdOrSlug]:', error);
@@ -208,9 +271,11 @@ export const getFeaturedProducts = async (req, res) => {
       .sort({ rating: -1, isBestSeller: -1 })
       .limit(limit);
 
+    const enrichedProducts = await attachWishlistFlag(products, req.user?._id);
+
     res.status(200).json({
       success: true,
-      data: products,
+      data: enrichedProducts,
     });
   } catch (error) {
     console.error('[Product Controller - getFeaturedProducts]:', error);
@@ -278,23 +343,41 @@ export const createProduct = async (req, res) => {
     const categoryName = body.category || 'Eyeglasses';
     const catSlug = body.categorySlug || generateSlug(categoryName);
 
-    // Format images
+    // Format images from uploaded files or fallback to URLs
     let imagesObj = { front: '', side: '', angle: '' };
-    if (typeof body.images === 'object' && !Array.isArray(body.images)) {
-      imagesObj = {
-        front: body.images.front || body.image || '',
-        side: body.images.side || '',
-        angle: body.images.angle || '',
-      };
-    } else if (Array.isArray(body.images)) {
-      imagesObj = {
-        front: body.images[0] || body.image || '',
-        side: body.images[1] || '',
-        angle: body.images[2] || '',
-      };
-    } else if (body.image) {
-      imagesObj = { front: body.image, side: '', angle: '' };
+
+    // 1. Check req.files from multer
+    if (req.files) {
+      if (req.files.front && req.files.front[0]) {
+        imagesObj.front = buildFileUrl(req, req.files.front[0].filename);
+      }
+      if (req.files.side && req.files.side[0]) {
+        imagesObj.side = buildFileUrl(req, req.files.side[0].filename);
+      }
+      if (req.files.angle && req.files.angle[0]) {
+        imagesObj.angle = buildFileUrl(req, req.files.angle[0].filename);
+      }
     }
+
+    // 2. Fallback to body images if file was not uploaded
+    const parsedBodyImages = parseJsonField(body.images, null);
+    if (!imagesObj.front) {
+      imagesObj.front = parsedBodyImages?.front || body.image || '';
+    }
+    if (!imagesObj.side) {
+      imagesObj.side = parsedBodyImages?.side || body['images[side]'] || '';
+    }
+    if (!imagesObj.angle) {
+      imagesObj.angle = parsedBodyImages?.angle || body['images[angle]'] || '';
+    }
+
+    // Parse complex JSON fields from FormData
+    const colors = parseJsonField(body.colors, []);
+    const frameSpecifications = parseJsonField(body.frameSpecifications, {});
+    const lensCompatibility = parseJsonField(body.lensCompatibility, {});
+    const eyeglassesConfig = parseJsonField(body.eyeglassesConfig, null);
+    const contactLensConfig = parseJsonField(body.contactLensConfig, null);
+    const sunglassesConfig = parseJsonField(body.sunglassesConfig, null);
 
     const productData = {
       ...body,
@@ -303,9 +386,18 @@ export const createProduct = async (req, res) => {
       category: categoryName,
       categorySlug: catSlug,
       images: imagesObj,
+      colors,
+      frameSpecifications,
+      lensCompatibility,
+      eyeglassesConfig,
+      contactLensConfig,
+      sunglassesConfig,
       stock: body.stock !== undefined ? Number(body.stock) : 20,
       price: Number(body.price),
       mrp: body.mrp ? Number(body.mrp) : Number(body.offerPrice || body.price),
+      isBestSeller: body.isBestSeller === 'true' || body.isBestSeller === true,
+      isNewArrival: body.isNewArrival === 'true' || body.isNewArrival === true,
+      isFeatured: body.isFeatured === 'true' || body.isFeatured === true,
     };
 
     const newProduct = await Product.create(productData);
@@ -365,16 +457,50 @@ export const updateProduct = async (req, res) => {
       }
     }
 
-    // Format images if provided
-    if (updates.images) {
-      if (Array.isArray(updates.images)) {
-        updates.images = {
-          front: updates.images[0] || product.images?.front || '',
-          side: updates.images[1] || product.images?.side || '',
-          angle: updates.images[2] || product.images?.angle || '',
-        };
+    // Merge uploaded files into images
+    let imagesObj = {
+      front: product.images?.front || '',
+      side: product.images?.side || '',
+      angle: product.images?.angle || '',
+    };
+
+    if (req.files) {
+      if (req.files.front && req.files.front[0]) {
+        imagesObj.front = buildFileUrl(req, req.files.front[0].filename);
+      }
+      if (req.files.side && req.files.side[0]) {
+        imagesObj.side = buildFileUrl(req, req.files.side[0].filename);
+      }
+      if (req.files.angle && req.files.angle[0]) {
+        imagesObj.angle = buildFileUrl(req, req.files.angle[0].filename);
       }
     }
+
+    // If images passed in body as URLs or JSON
+    if (updates.images) {
+      const parsedImages = parseJsonField(updates.images, updates.images);
+      if (typeof parsedImages === 'object' && !Array.isArray(parsedImages)) {
+        if (!req.files?.front && parsedImages.front) imagesObj.front = parsedImages.front;
+        if (!req.files?.side && parsedImages.side) imagesObj.side = parsedImages.side;
+        if (!req.files?.angle && parsedImages.angle) imagesObj.angle = parsedImages.angle;
+      }
+    }
+    updates.images = imagesObj;
+
+    // Parse complex JSON fields
+    if (updates.colors !== undefined) updates.colors = parseJsonField(updates.colors, updates.colors);
+    if (updates.frameSpecifications !== undefined) updates.frameSpecifications = parseJsonField(updates.frameSpecifications, updates.frameSpecifications);
+    if (updates.lensCompatibility !== undefined) updates.lensCompatibility = parseJsonField(updates.lensCompatibility, updates.lensCompatibility);
+    if (updates.eyeglassesConfig !== undefined) updates.eyeglassesConfig = parseJsonField(updates.eyeglassesConfig, updates.eyeglassesConfig);
+    if (updates.contactLensConfig !== undefined) updates.contactLensConfig = parseJsonField(updates.contactLensConfig, updates.contactLensConfig);
+    if (updates.sunglassesConfig !== undefined) updates.sunglassesConfig = parseJsonField(updates.sunglassesConfig, updates.sunglassesConfig);
+
+    if (updates.price !== undefined) updates.price = Number(updates.price);
+    if (updates.mrp !== undefined) updates.mrp = Number(updates.mrp);
+    if (updates.stock !== undefined) updates.stock = Number(updates.stock);
+    if (updates.isBestSeller !== undefined) updates.isBestSeller = updates.isBestSeller === 'true' || updates.isBestSeller === true;
+    if (updates.isNewArrival !== undefined) updates.isNewArrival = updates.isNewArrival === 'true' || updates.isNewArrival === true;
+    if (updates.isFeatured !== undefined) updates.isFeatured = updates.isFeatured === 'true' || updates.isFeatured === true;
 
     const updated = await Product.findByIdAndUpdate(product._id, updates, {
       new: true,
@@ -395,6 +521,7 @@ export const updateProduct = async (req, res) => {
     });
   }
 };
+
 
 /**
  * @desc    Delete a product

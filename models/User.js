@@ -62,18 +62,6 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
-    addresses: [
-      {
-        fullName: String,
-        phone: String,
-        street: String,
-        locality: String,
-        city: String,
-        state: String,
-        pincode: String,
-        isDefault: { type: Boolean, default: false },
-      },
-    ],
   },
   {
     timestamps: true,

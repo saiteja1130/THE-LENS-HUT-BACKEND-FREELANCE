@@ -32,7 +32,6 @@ const formatUserResponse = (user) => {
     role: user.role,
     isEmailVerified: user.isEmailVerified,
     avatar: user.avatar || '',
-    addresses: user.addresses || [],
     createdAt: user.createdAt,
   };
 };
