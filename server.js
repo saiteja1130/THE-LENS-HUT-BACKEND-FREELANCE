@@ -12,6 +12,7 @@ import categoryRoutes from './routes/categoryRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import wishlistRoutes from './routes/wishlistRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
+import orderRoutes from './routes/orderRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -56,6 +57,7 @@ app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/wishlist', wishlistRoutes);
 app.use('/api/v1/cart', cartRoutes);
+app.use('/api/v1/orders', orderRoutes);
 
 
 // 404 Fallback Handler
