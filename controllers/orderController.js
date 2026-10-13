@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
@@ -5,15 +6,15 @@ import Cart from '../models/Cart.js';
 import { sendOrderConfirmationEmail } from '../helpers/mailer.js';
 
 /**
- * Generate a unique order number formatted as LH-XXXXXX
+ * Generate a cryptographically strong unique order number formatted as LH-XXXXXXXX
  */
 const generateUniqueOrderNumber = async () => {
   let isUnique = false;
   let orderNumber = '';
 
   while (!isUnique) {
-    const randomDigits = Math.floor(100000 + Math.random() * 900000);
-    orderNumber = `LH-${randomDigits}`;
+    const randomHex = crypto.randomBytes(4).toString('hex').toUpperCase();
+    orderNumber = `LH-${randomHex}`;
     const existing = await Order.findOne({ orderNumber });
     if (!existing) {
       isUnique = true;
@@ -151,94 +152,121 @@ export const createOrder = async (req, res) => {
         '',
     };
 
-    // 4. Validate stock & prepare line items
+    // 4. Validate stock & prepare line items with authoritative server-side pricing
     const preparedItems = [];
     const stockUpdates = [];
 
     for (const rawItem of items) {
       const quantity = Math.max(1, Number(rawItem.quantity) || 1);
-      const unitPrice = Number(rawItem.unitPrice) || 0;
-      const itemTotalPrice = Number(rawItem.totalPrice) || unitPrice * quantity;
-
-      let productRef = null;
-      let sku = rawItem.sku || 'LH-OPTICAL';
-      let brand = rawItem.brand || 'The Lens Hut';
-      let itemName = rawItem.name || 'Optical Eyewear';
-      let image = rawItem.image || '';
 
       const targetId =
         rawItem.productId ||
         rawItem.id ||
         (rawItem.product?._id ? rawItem.product._id.toString() : rawItem.product);
 
-      if (targetId && mongoose.Types.ObjectId.isValid(targetId)) {
-        const productDoc = await Product.findById(targetId);
-        if (productDoc) {
-          productRef = productDoc._id;
-          sku = productDoc.sku || sku;
-          brand = productDoc.brand || brand;
-          itemName = productDoc.name || itemName;
-          image = image || productDoc.images?.front || productDoc.primaryImage || '';
-
-          // Validate inventory availability
-          if (productDoc.stock !== undefined && productDoc.stock < quantity) {
-            return res.status(400).json({
-              success: false,
-              message: `Requested quantity for "${productDoc.name}" exceeds available stock (${productDoc.stock} in stock).`,
-              errorCode: 'INSUFFICIENT_STOCK',
-              data: {
-                productId: productDoc._id,
-                requested: quantity,
-                available: productDoc.stock,
-              },
-            });
-          }
-
-          stockUpdates.push({
-            productId: productDoc._id,
-            decrementBy: quantity,
-          });
-        }
+      if (!targetId || !mongoose.Types.ObjectId.isValid(targetId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid product ID supplied in order items.',
+          errorCode: 'INVALID_PRODUCT_ID',
+        });
       }
 
+      const productDoc = await Product.findById(targetId);
+      if (!productDoc || productDoc.status === 'archived') {
+        return res.status(400).json({
+          success: false,
+          message: `Product "${rawItem.name || targetId}" is not available or does not exist.`,
+          errorCode: 'PRODUCT_NOT_AVAILABLE',
+        });
+      }
+
+      // Validate inventory availability
+      if (productDoc.stock !== undefined && productDoc.stock < quantity) {
+        return res.status(400).json({
+          success: false,
+          message: `Requested quantity for "${productDoc.name}" exceeds available stock (${productDoc.stock} in stock).`,
+          errorCode: 'INSUFFICIENT_STOCK',
+          data: {
+            productId: productDoc._id,
+            requested: quantity,
+            available: productDoc.stock,
+          },
+        });
+      }
+
+      // Calculate authoritative server unit price from database product model
+      const unitBasePrice =
+        typeof productDoc.offerPrice === 'number' && productDoc.offerPrice > 0
+          ? productDoc.offerPrice
+          : (productDoc.price || 0);
+
+      // Validate optical lens package addon if configured
+      let lensAddonPrice = 0;
+      const lensId = rawItem.configuration?.lensSelection?.lensId;
+      if (lensId && Array.isArray(productDoc.eyeglassesConfig?.availableLenses)) {
+        const matchedLens = productDoc.eyeglassesConfig.availableLenses.find((l) => l.id === lensId);
+        if (matchedLens && typeof matchedLens.price === 'number') {
+          lensAddonPrice = matchedLens.price;
+        }
+      }
+      if (lensAddonPrice === 0 && rawItem.configuration?.lensSelection?.lensPrice) {
+        lensAddonPrice = Math.max(0, Number(rawItem.configuration.lensSelection.lensPrice) || 0);
+      }
+
+      const verifiedUnitPrice = unitBasePrice + lensAddonPrice;
+      const verifiedTotalPrice = verifiedUnitPrice * quantity;
+
+      stockUpdates.push({
+        productId: productDoc._id,
+        decrementBy: quantity,
+      });
+
       preparedItems.push({
-        product: productRef,
-        productId: targetId ? targetId.toString() : '',
-        productType: rawItem.productType || rawItem.configuration?.productType || 'eyeglasses',
-        name: itemName,
-        brand,
-        sku,
-        image,
+        product: productDoc._id,
+        productId: productDoc._id.toString(),
+        productType: rawItem.productType || rawItem.configuration?.productType || productDoc.productType || 'eyeglasses',
+        name: productDoc.name,
+        brand: productDoc.brand || rawItem.brand || 'The Lens Hut',
+        sku: productDoc.sku || rawItem.sku || 'LH-OPTICAL',
+        image: rawItem.image || productDoc.images?.front || productDoc.primaryImage || '',
         selectedColor: rawItem.selectedColor || rawItem.variantName || 'Standard',
         selectedSize: rawItem.selectedSize || 'Standard',
         variantId: rawItem.variantId || 'default',
         variantName: rawItem.variantName || 'Default',
         quantity,
-        unitPrice,
-        totalPrice: itemTotalPrice,
+        unitPrice: verifiedUnitPrice,
+        totalPrice: verifiedTotalPrice,
         configuration: rawItem.configuration || {},
       });
     }
 
-    // 5. Deduct inventory stock atomically
-    for (const update of stockUpdates) {
-      await Product.findByIdAndUpdate(update.productId, {
-        $inc: { stock: -update.decrementBy },
-      });
-    }
-
-    // 6. Generate order identifiers & financial totals
+    // 5. Generate order identifiers & authoritative financial totals
     const orderNumber = await generateUniqueOrderNumber();
     const trackingNumber = generateTrackingNumber();
 
-    const calcSubtotal = Number(subtotal) || preparedItems.reduce((acc, i) => acc + i.totalPrice, 0);
-    const calcDiscount = Number(discountAmount !== undefined ? discountAmount : discount) || 0;
-    const calcShipping = Number(shippingFee !== undefined ? shippingFee : shipping) || 0;
-    const calcTotal = Number(totalAmount !== undefined ? totalAmount : total) || Math.max(0, calcSubtotal - calcDiscount + calcShipping);
+    const calcSubtotal = preparedItems.reduce((acc, i) => acc + i.totalPrice, 0);
+
+    // Calculate shipping safely based on cart subtotal & delivery tier
+    const isExpress =
+      req.body.shippingMethod === 'express' ||
+      Number(shippingFee) === 149 ||
+      Number(shipping) === 149;
+    const calcShipping = isExpress ? 149 : (calcSubtotal >= 999 ? 0 : 99);
+
+    // Validate discounts strictly (cannot be negative and cannot exceed subtotal)
+    const rawDiscount = Math.max(0, Number(discountAmount !== undefined ? discountAmount : discount) || 0);
+    const calcDiscount = Math.min(calcSubtotal, rawDiscount);
+
+    // Calculate authoritative total
+    const calcTotal = Math.max(0, calcSubtotal - calcDiscount + calcShipping);
+
+    // Initial payment status is always Pending on checkout; client cannot force 'Paid' status
+    const initialPaymentStatus = 'Pending';
 
     const prescriptionData = extractPrescriptionData(prescription, preparedItems);
 
-    // 7. Create Order document
+    // 6. Create Order document
     const newOrder = new Order({
       orderNumber,
       user: req.user ? req.user._id : null,
@@ -264,8 +292,8 @@ export const createOrder = async (req, res) => {
       shippingFee: calcShipping,
       total: calcTotal,
       totalAmount: calcTotal,
-      paymentMethod: paymentMethod || 'UPI',
-      paymentStatus: paymentStatus || 'Paid',
+      paymentMethod: paymentMethod || 'Cash on Delivery',
+      paymentStatus: initialPaymentStatus,
       orderStatus: 'Processing',
       status: 'Placed',
       tracking: {
@@ -282,7 +310,46 @@ export const createOrder = async (req, res) => {
       orderDate: new Date(),
     });
 
-    const savedOrder = await newOrder.save();
+    // 7. Deduct inventory stock atomically with rollback guarantee
+    const appliedStockUpdates = [];
+    let savedOrder;
+
+    try {
+      for (const update of stockUpdates) {
+        const updatedDoc = await Product.findOneAndUpdate(
+          { _id: update.productId, stock: { $gte: update.decrementBy } },
+          { $inc: { stock: -update.decrementBy } },
+          { new: true }
+        );
+
+        if (!updatedDoc) {
+          throw new Error(`INSUFFICIENT_STOCK_${update.productId}`);
+        }
+
+        appliedStockUpdates.push(update);
+      }
+
+      savedOrder = await newOrder.save();
+    } catch (saveOrStockErr) {
+      // Rollback any deducted stock in reverse
+      for (const rollback of appliedStockUpdates) {
+        await Product.findByIdAndUpdate(rollback.productId, {
+          $inc: { stock: rollback.decrementBy },
+        }).catch((rbErr) => {
+          console.error('[Order Controller] Rollback error for product:', rollback.productId, rbErr);
+        });
+      }
+
+      if (saveOrStockErr.message && saveOrStockErr.message.startsWith('INSUFFICIENT_STOCK_')) {
+        return res.status(400).json({
+          success: false,
+          message: 'One or more items in your cart became unavailable during checkout. Please review inventory.',
+          errorCode: 'INSUFFICIENT_STOCK',
+        });
+      }
+
+      throw saveOrStockErr;
+    }
 
     // 8. If authenticated user, clear their backend shopping bag
     if (req.user) {
@@ -380,17 +447,82 @@ export const getOrderById = async (req, res) => {
       });
     }
 
-    // Authorization check: if authenticated user is non-admin, ensure order belongs to them
-    if (
+    // Authorization & Ownership Verification:
+    // 1. Admin has global visibility
+    const isAdmin = req.user && req.user.role === 'admin';
+
+    // 2. Authenticated user who created the order
+    const isOwner =
       req.user &&
-      req.user.role !== 'admin' &&
       order.user &&
-      order.user.toString() !== req.user._id.toString()
-    ) {
+      order.user.toString() === req.user._id.toString();
+
+    // 3. Authenticated user whose email matches the order customer
+    const isEmailOwner =
+      req.user &&
+      req.user.email &&
+      order.customer?.email &&
+      req.user.email.toLowerCase() === order.customer.email.toLowerCase();
+
+    // 4. Guest verification via matching email or phone
+    const queryEmail = (req.query.email || req.headers['x-order-email'] || '').trim().toLowerCase();
+    const queryPhone = (req.query.phone || req.headers['x-order-phone'] || '').trim().replace(/\D/g, '');
+    const orderEmail = (order.customer?.email || '').trim().toLowerCase();
+    const orderPhone = (order.customer?.phone || '').trim().replace(/\D/g, '');
+
+    const isVerifiedEmail = Boolean(queryEmail && orderEmail && queryEmail === orderEmail);
+    const isVerifiedPhone = Boolean(queryPhone && orderPhone && queryPhone.length >= 6 && (orderPhone.endsWith(queryPhone) || queryPhone.endsWith(orderPhone)));
+    const isGuestVerified = isVerifiedEmail || isVerifiedPhone;
+
+    const isAuthorized = isAdmin || isOwner || isEmailOwner || isGuestVerified;
+
+    if (!isAuthorized) {
+      // If caller is authenticated user attempting to view someone else's order
+      if (req.user && req.user.role !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied to this order',
+          errorCode: 'FORBIDDEN_ORDER_ACCESS',
+        });
+      }
+
+      // If public unauthenticated tracking query, return sanitized tracking data without exposing customer PII or prescription
+      if (req.query.trackingOnly === 'true' || req.query.mode === 'track') {
+        return res.status(200).json({
+          success: true,
+          isRedacted: true,
+          data: {
+            orderNumber: order.orderNumber,
+            orderStatus: order.orderStatus,
+            status: order.status,
+            tracking: order.tracking,
+            trackingNumber: order.trackingNumber,
+            estimatedDelivery: order.estimatedDelivery,
+            createdAt: order.createdAt,
+            orderDate: order.orderDate,
+            total: order.total,
+            totalAmount: order.totalAmount,
+            itemCount: order.items?.length || 0,
+            items: order.items?.map((i) => ({
+              name: i.name,
+              image: i.image,
+              quantity: i.quantity,
+              productType: i.productType,
+              brand: i.brand,
+            })),
+            shippingDestination: {
+              city: order.shippingAddress?.city,
+              state: order.shippingAddress?.state,
+            },
+          },
+        });
+      }
+
+      // Block unauthenticated exposure of customer address, phone, email, and prescription details
       return res.status(403).json({
         success: false,
-        message: 'Access denied to this order',
-        errorCode: 'FORBIDDEN_ORDER_ACCESS',
+        message: 'Verification required: please provide the customer email or phone number associated with this order to view full order details.',
+        errorCode: 'ORDER_VERIFICATION_REQUIRED',
       });
     }
 

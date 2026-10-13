@@ -20,6 +20,12 @@ const PORT = process.env.PORT || 5000;
 // Connect to MongoDB
 connectDB();
 
+// Validate critical security environment variables
+if (!process.env.JWT_SECRET) {
+  console.error('[SECURITY FATAL]: JWT_SECRET environment variable is missing. Server cannot start securely without a configured JWT secret.');
+  process.exit(1);
+}
+
 // Global Middlewares
 app.use(cors({
   origin: true, // Allow frontend, mobile, and admin origins

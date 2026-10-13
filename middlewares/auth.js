@@ -23,10 +23,11 @@ export const protect = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || 'super_secret_jwt_key_lenshut_2026_secure'
-    );
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET is not configured on the server');
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const user = await User.findById(decoded.id);
 
@@ -105,10 +106,12 @@ export const optionalAuth = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || 'super_secret_jwt_key_lenshut_2026_secure'
-    );
+    if (!process.env.JWT_SECRET) {
+      req.user = null;
+      return next();
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const user = await User.findById(decoded.id);
     req.user = user || null;

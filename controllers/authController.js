@@ -13,9 +13,12 @@ const generateNumericOTP = () => {
  * Sign JWT Token
  */
 const generateToken = (user) => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET is not configured on the server');
+  }
   return jwt.sign(
     { id: user._id, role: user.role },
-    process.env.JWT_SECRET || 'super_secret_jwt_key_lenshut_2026_secure',
+    process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );
 };

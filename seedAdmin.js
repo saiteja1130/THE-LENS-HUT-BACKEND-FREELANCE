@@ -9,23 +9,31 @@ const seedUsers = async () => {
     console.log('[Seed] Connected to MongoDB');
 
     // 1. Seed or update Admin
-    let admin = await User.findOne({ email: 'admin@thelenshut.com' });
+    let admin = await User.findOne({ email: process.env.ADMIN_EMAIL || 'admin@thelenshut.com' });
+    const adminPassword = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? null : 'Admin@LH_2026!Secure');
+    if (!adminPassword && process.env.NODE_ENV === 'production') {
+      throw new Error('ADMIN_PASSWORD must be configured in environment before running seed script in production.');
+    }
+
     if (!admin) {
       admin = new User({
         fullName: 'Store Administrator',
-        email: 'admin@thelenshut.com',
-        phone: '+91 99999 88888',
-        password: 'admin123',
+        email: process.env.ADMIN_EMAIL || 'admin@thelenshut.com',
+        phone: process.env.ADMIN_PHONE || '+91 99999 88888',
+        password: adminPassword,
         role: 'admin',
         isEmailVerified: true,
       });
       await admin.save();
-      console.log('[Seed] Admin user created: admin@thelenshut.com (password: admin123)');
+      console.log(`[Seed] Admin user created: ${admin.email}`);
     } else {
       admin.role = 'admin';
       admin.isEmailVerified = true;
+      if (process.env.ADMIN_PASSWORD) {
+        admin.password = process.env.ADMIN_PASSWORD;
+      }
       await admin.save();
-      console.log('[Seed] Admin user verified: admin@thelenshut.com');
+      console.log(`[Seed] Admin user verified: ${admin.email}`);
     }
 
     // 2. Seed or update Demo Verified User
