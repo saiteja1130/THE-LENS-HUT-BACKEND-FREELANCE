@@ -35,6 +35,17 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Normalize request URL if rewritten by serverless proxy
+app.use((req, res, next) => {
+  if (req.url === '/server.js' || req.url.startsWith('/server.js')) {
+    const rawPath = req.headers['x-matched-path'] || req.headers['x-forwarded-uri'] || '/';
+    if (rawPath && rawPath !== '/server.js') {
+      req.url = rawPath;
+    }
+  }
+  next();
+});
+
 // Serve uploaded files statically (use /tmp in serverless/Vercel)
 const isServerless = Boolean(
   process.env.VERCEL || 

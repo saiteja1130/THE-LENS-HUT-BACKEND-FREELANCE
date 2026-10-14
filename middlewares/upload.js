@@ -1,5 +1,6 @@
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import os from 'os';
 
 // Determine safe upload directory:
