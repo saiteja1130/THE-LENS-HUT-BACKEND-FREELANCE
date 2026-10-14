@@ -329,7 +329,7 @@ orderSchema.pre('save', function (next) {
   if (!this.trackingNumber && this.tracking?.trackingNumber) {
     this.trackingNumber = this.tracking.trackingNumber;
   }
-  next();
+  if (typeof next === 'function') next();
 });
 
 const Order = mongoose.model('Order', orderSchema);

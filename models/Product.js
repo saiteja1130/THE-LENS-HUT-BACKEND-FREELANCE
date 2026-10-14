@@ -177,7 +177,7 @@ productSchema.pre('save', function (next) {
   if (!this.offerPrice) {
     this.offerPrice = this.price;
   }
-  next();
+  if (typeof next === 'function') next();
 });
 
 const Product = mongoose.model('Product', productSchema);
