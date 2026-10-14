@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import os from 'os';
 import connectDB from './configs/db.js';
 
 // Route imports
@@ -34,8 +35,17 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files statically
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+// Serve uploaded files statically (use /tmp in serverless/Vercel)
+const isServerless = Boolean(
+  process.env.VERCEL || 
+  process.env.AWS_LAMBDA_FUNCTION_NAME || 
+  process.env.LAMBDA_TASK_ROOT
+);
+const uploadStaticDir = isServerless
+  ? path.join(os.tmpdir(), 'uploads')
+  : path.join(process.cwd(), 'uploads');
+
+app.use('/uploads', express.static(uploadStaticDir));
 
 
 // Request logging in development
@@ -88,13 +98,15 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start HTTP Server
-const server = app.listen(PORT, () => {
-  console.log(`\n======================================================`);
-  console.log(`  The Lens Hut Backend Server running on port ${PORT}`);
-  console.log(`  Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`  API Base URL: http://localhost:${PORT}/api/v1`);
-  console.log(`======================================================\n`);
-});
+// Start HTTP Server (Only listen when running directly, not inside Vercel serverless environment)
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\n======================================================`);
+    console.log(`  The Lens Hut Backend Server running on port ${PORT}`);
+    console.log(`  Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`  API Base URL: http://localhost:${PORT}/api/v1`);
+    console.log(`======================================================\n`);
+  });
+}
 
 export default app;
