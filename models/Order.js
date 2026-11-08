@@ -155,11 +155,17 @@ const opticalEyeSchema = new mongoose.Schema(
 const prescriptionSchema = new mongoose.Schema(
   {
     hasPrescription: { type: Boolean, default: false },
+    method: { type: String, default: '' },
     rightEye: { type: opticalEyeSchema, default: () => ({}) },
     leftEye: { type: opticalEyeSchema, default: () => ({}) },
     pd: { type: String, default: '63 mm' },
     lensPackage: { type: String, default: 'Optical Lab Custom Lens' },
     rxFile: { type: String, default: '' },
+    fileUrl: { type: String, default: '' },
+    fileName: { type: String, default: '' },
+    fileType: { type: String, default: '' },
+    fileSize: { type: Number, default: 0 },
+    notes: { type: String, default: '' },
   },
   { _id: false }
 );

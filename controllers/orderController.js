@@ -35,20 +35,51 @@ const generateTrackingNumber = () => {
 /**
  * Extract or normalize prescription from order payload
  */
-const extractPrescriptionData = (payloadPrescription, items) => {
-  if (payloadPrescription && payloadPrescription.hasPrescription) {
-    return payloadPrescription;
+const extractPrescriptionData = (payloadPrescription, items = []) => {
+  if (
+    payloadPrescription &&
+    (payloadPrescription.hasPrescription ||
+      payloadPrescription.fileUrl ||
+      payloadPrescription.rxFile ||
+      payloadPrescription.method === 'upload' ||
+      payloadPrescription.method === 'manual')
+  ) {
+    const rxFile = payloadPrescription.rxFile || payloadPrescription.fileUrl || '';
+    const isUpload = payloadPrescription.method === 'upload' || Boolean(rxFile || payloadPrescription.fileName);
+    return {
+      hasPrescription: true,
+      method: payloadPrescription.method || (isUpload ? 'upload' : 'manual'),
+      rightEye: payloadPrescription.rightEye || {},
+      leftEye: payloadPrescription.leftEye || {},
+      pd: payloadPrescription.pd || '63 mm',
+      lensPackage: payloadPrescription.lensPackage || 'Optical Lab Custom Lens',
+      rxFile: rxFile,
+      fileUrl: payloadPrescription.fileUrl || rxFile,
+      fileName: payloadPrescription.fileName || '',
+      fileType: payloadPrescription.fileType || '',
+      fileSize: payloadPrescription.fileSize || 0,
+      notes: payloadPrescription.notes || '',
+    };
   }
 
-  // Check if any eyeglasses item has an attached prescription in configuration
-  const rxItem = items.find(
-    (i) => i.configuration?.prescription?.od?.sph || i.configuration?.prescription?.hasPrescription
+  // Check if any item in cart has an attached prescription in configuration
+  const rxItem = (items || []).find(
+    (i) =>
+      i.configuration?.prescription?.hasPrescription ||
+      i.configuration?.prescription?.method === 'upload' ||
+      i.configuration?.prescription?.fileUrl ||
+      i.configuration?.prescription?.fileName ||
+      i.configuration?.prescription?.rxFile ||
+      i.configuration?.prescription?.od?.sph
   );
 
   if (rxItem?.configuration?.prescription) {
     const rx = rxItem.configuration.prescription;
+    const isUpload = rx.method === 'upload' || Boolean(rx.fileUrl || rx.fileName || rx.rxFile);
+    const fileUrl = rx.fileUrl || rx.rxFile || rx.url || '';
     return {
       hasPrescription: true,
+      method: rx.method || (isUpload ? 'upload' : 'manual'),
       rightEye: {
         sph: rx.od?.sph || rx.rightEye?.sph || '0.00',
         cyl: rx.od?.cyl || rx.rightEye?.cyl || '0.00',
@@ -66,17 +97,55 @@ const extractPrescriptionData = (payloadPrescription, items) => {
         rxItem.configuration?.lensSelection?.lensName ||
         rx.lensPackage ||
         'Optical Lab Custom Lens',
-      rxFile: rx.rxFile || '',
+      rxFile: fileUrl,
+      fileUrl: fileUrl,
+      fileName: rx.fileName || '',
+      fileType: rx.fileType || '',
+      fileSize: rx.fileSize || 0,
+      notes: rx.notes || '',
+    };
+  }
+
+  // Check if any contact lens item has an uploaded prescription document
+  const clItem = (items || []).find(
+    (i) =>
+      i.configuration?.contactLens?.prescriptionFile?.fileUrl ||
+      i.configuration?.contactLens?.prescriptionFile?.fileName ||
+      i.configuration?.contactLens?.prescriptionMethod === 'upload'
+  );
+
+  if (clItem?.configuration?.contactLens?.prescriptionFile) {
+    const clRx = clItem.configuration.contactLens.prescriptionFile;
+    const fileUrl = clRx.fileUrl || clRx.url || '';
+    return {
+      hasPrescription: true,
+      method: 'upload',
+      rightEye: { sph: '0.00', cyl: '0.00', axis: '-' },
+      leftEye: { sph: '0.00', cyl: '0.00', axis: '-' },
+      pd: '63 mm',
+      lensPackage: 'Contact Lens Clinical Rx',
+      rxFile: fileUrl,
+      fileUrl: fileUrl,
+      fileName: clRx.fileName || 'Contact_Lens_Prescription.pdf',
+      fileType: clRx.fileType || '',
+      fileSize: clRx.fileSize || 0,
+      notes: 'Uploaded with contact lens order',
     };
   }
 
   return {
     hasPrescription: false,
+    method: 'none',
     rightEye: { sph: '0.00', cyl: '0.00', axis: '-' },
     leftEye: { sph: '0.00', cyl: '0.00', axis: '-' },
     pd: '63 mm',
-    lensPackage: 'Standard',
+    lensPackage: 'Standard Frame Only',
     rxFile: '',
+    fileUrl: '',
+    fileName: '',
+    fileType: '',
+    fileSize: 0,
+    notes: '',
   };
 };
 

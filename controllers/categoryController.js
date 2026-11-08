@@ -1,4 +1,5 @@
 import Category from '../models/Category.js';
+import { getFullImageUrl } from '../middlewares/upload.js';
 
 /**
  * Generate slug from name
@@ -122,14 +123,18 @@ export const createCategory = async (req, res) => {
       itemCount,
     } = req.body;
 
-    if (!name || !imageUrl) {
+    let finalImageUrl = req.file
+      ? getFullImageUrl(req, 'categories', req.file.filename)
+      : (imageUrl ? getFullImageUrl(req, 'categories', imageUrl.trim()) : '');
+
+    if (!name || !finalImageUrl) {
       return res.status(400).json({
         success: false,
         message: 'Name and image URL are required fields',
         errorCode: 'VALIDATION_ERROR',
         errors: {
           name: !name ? 'Category name is required' : undefined,
-          imageUrl: !imageUrl ? 'Image URL is required' : undefined,
+          imageUrl: !finalImageUrl ? 'Image is required' : undefined,
         },
       });
     }
@@ -156,7 +161,7 @@ export const createCategory = async (req, res) => {
       slug: finalSlug,
       subtitle: subtitle ? subtitle.trim() : '',
       description: description ? description.trim() : '',
-      imageUrl: imageUrl.trim(),
+      imageUrl: finalImageUrl,
       link: link || `/${finalSlug}`,
       order: order !== undefined ? order : count + 1,
       isActive: isActive !== undefined ? isActive : true,
@@ -215,11 +220,17 @@ export const updateCategory = async (req, res) => {
       if (req.body[field] !== undefined) {
         if (field === 'slug') {
           category.slug = slugify(req.body.slug);
+        } else if (field === 'imageUrl') {
+          category.imageUrl = getFullImageUrl(req, 'categories', req.body.imageUrl.trim());
         } else {
           category[field] = req.body[field];
         }
       }
     });
+
+    if (req.file) {
+      category.imageUrl = getFullImageUrl(req, 'categories', req.file.filename);
+    }
 
     await category.save();
 

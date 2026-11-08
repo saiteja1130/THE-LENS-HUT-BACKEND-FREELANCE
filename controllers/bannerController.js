@@ -1,4 +1,5 @@
 import Banner from '../models/Banner.js';
+import { getFullImageUrl } from '../middlewares/upload.js';
 
 /**
  * @route   GET /api/v1/banners
@@ -106,14 +107,18 @@ export const createBanner = async (req, res) => {
       targetCategory,
     } = req.body;
 
-    if (!title || !imageUrl) {
+    let finalImageUrl = req.file
+      ? getFullImageUrl(req, 'banners', req.file.filename)
+      : (imageUrl ? getFullImageUrl(req, 'banners', imageUrl.trim()) : '');
+
+    if (!title || !finalImageUrl) {
       return res.status(400).json({
         success: false,
-        message: 'Title and image URL are required fields',
+        message: 'Title and image are required fields',
         errorCode: 'VALIDATION_ERROR',
         errors: {
           title: !title ? 'Title is required' : undefined,
-          imageUrl: !imageUrl ? 'Image URL is required' : undefined,
+          imageUrl: !finalImageUrl ? 'Image is required' : undefined,
         },
       });
     }
@@ -125,7 +130,7 @@ export const createBanner = async (req, res) => {
       headline: headline ? headline.trim() : '',
       kicker: kicker ? kicker.trim() : (headline ? headline.trim() : ''),
       subtitle: subtitle ? subtitle.trim() : '',
-      imageUrl: imageUrl.trim(),
+      imageUrl: finalImageUrl,
       link: link || '/shop',
       buttonText: buttonText || 'Shop Now',
       secondaryBtnText: secondaryBtnText || '',
@@ -190,9 +195,17 @@ export const updateBanner = async (req, res) => {
 
     fields.forEach((field) => {
       if (req.body[field] !== undefined) {
-        banner[field] = req.body[field];
+        if (field === 'imageUrl') {
+          banner.imageUrl = getFullImageUrl(req, 'banners', req.body.imageUrl.trim());
+        } else {
+          banner[field] = req.body[field];
+        }
       }
     });
+
+    if (req.file) {
+      banner.imageUrl = getFullImageUrl(req, 'banners', req.file.filename);
+    }
 
     await banner.save();
 

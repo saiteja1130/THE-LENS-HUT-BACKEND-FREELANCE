@@ -1,31 +1,19 @@
 import Product from '../models/Product.js';
 import Category from '../models/Category.js';
-import Wishlist from '../models/Wishlist.js';
+import { getFullImageUrl } from '../middlewares/upload.js';
 
 /**
- * Attach isInWishlist boolean to product object(s) based on user's active wishlist
+ * Format product object(s) with standard id
  */
-const attachWishlistFlag = async (products, userId) => {
+const formatProducts = (products) => {
   if (!products) return products;
-
-  let wishlistProductIds = new Set();
-  if (userId) {
-    const wishlist = await Wishlist.findOne({ user: userId }).select('products.product').lean();
-    if (wishlist?.products) {
-      wishlistProductIds = new Set(
-        wishlist.products.map((item) => item.product.toString())
-      );
-    }
-  }
 
   const formatOne = (product) => {
     if (!product) return null;
     const pObj = product.toObject ? product.toObject() : { ...product };
-    const pId = (pObj._id || pObj.id || '').toString();
     return {
       ...pObj,
       id: pObj._id || pObj.id,
-      isInWishlist: wishlistProductIds.has(pId),
     };
   };
 
@@ -53,8 +41,7 @@ const generateSlug = (text) => {
  */
 const buildFileUrl = (req, filename) => {
   if (!filename) return '';
-  const baseUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
-  return `${baseUrl}/uploads/products/${filename}`;
+  return getFullImageUrl(req, 'products', filename);
 };
 
 /**
@@ -191,7 +178,7 @@ export const getProducts = async (req, res) => {
       Product.countDocuments(query),
     ]);
 
-    const enrichedProducts = await attachWishlistFlag(products, req.user?._id);
+    const enrichedProducts = formatProducts(products);
 
     res.status(200).json({
       success: true,
@@ -240,7 +227,7 @@ export const getProductByIdOrSlug = async (req, res) => {
       });
     }
 
-    const enrichedProduct = await attachWishlistFlag(product, req.user?._id);
+    const enrichedProduct = formatProducts(product);
 
     res.status(200).json({
       success: true,
@@ -271,7 +258,7 @@ export const getFeaturedProducts = async (req, res) => {
       .sort({ rating: -1, isBestSeller: -1 })
       .limit(limit);
 
-    const enrichedProducts = await attachWishlistFlag(products, req.user?._id);
+    const enrichedProducts = formatProducts(products);
 
     res.status(200).json({
       success: true,
@@ -326,6 +313,22 @@ export const createProduct = async (req, res) => {
       });
     }
 
+    // Validation: Category must exist in the database and must be selected
+    const categoriesCount = await Category.countDocuments();
+    if (categoriesCount === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No categories exist in the store. You must add at least one category before adding products.',
+      });
+    }
+
+    if (!body.category || !body.category.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Category is required. Please select a store category.',
+      });
+    }
+
     // Auto-generate or sanitize slug
     let baseSlug = body.slug ? generateSlug(body.slug) : generateSlug(body.name);
     let finalSlug = baseSlug;
@@ -340,7 +343,7 @@ export const createProduct = async (req, res) => {
       : `TLH-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
     // Normalize category slug
-    const categoryName = body.category || 'Eyeglasses';
+    const categoryName = body.category.trim();
     const catSlug = body.categorySlug || generateSlug(categoryName);
 
     // Format images from uploaded files or fallback to URLs
@@ -359,20 +362,41 @@ export const createProduct = async (req, res) => {
       }
     }
 
-    // 2. Fallback to body images if file was not uploaded
-    const parsedBodyImages = parseJsonField(body.images, null);
-    if (!imagesObj.front) {
-      imagesObj.front = parsedBodyImages?.front || body.image || '';
-    }
-    if (!imagesObj.side) {
-      imagesObj.side = parsedBodyImages?.side || body['images[side]'] || '';
-    }
-    if (!imagesObj.angle) {
-      imagesObj.angle = parsedBodyImages?.angle || body['images[angle]'] || '';
-    }
-
     // Parse complex JSON fields from FormData
     const colors = parseJsonField(body.colors, []);
+    const firstVariantImages = colors?.[0]?.images || {};
+
+    // 2. Fallback to body images or first color variant images if files not uploaded
+    const parsedBodyImages = parseJsonField(body.images, null);
+    if (!imagesObj.front) {
+      imagesObj.front = parsedBodyImages?.front || firstVariantImages.front || body.image || '';
+    }
+    if (!imagesObj.side) {
+      imagesObj.side = parsedBodyImages?.side || firstVariantImages.side || body['images[side]'] || '';
+    }
+    if (!imagesObj.angle) {
+      imagesObj.angle = parsedBodyImages?.angle || firstVariantImages.angle || body['images[angle]'] || '';
+    }
+    // Ensure full URLs are stored in imagesObj
+    if (imagesObj.front) imagesObj.front = getFullImageUrl(req, 'products', imagesObj.front);
+    if (imagesObj.side) imagesObj.side = getFullImageUrl(req, 'products', imagesObj.side);
+    if (imagesObj.angle) imagesObj.angle = getFullImageUrl(req, 'products', imagesObj.angle);
+
+    // Ensure full URLs are stored in each color variant
+    const normalizedColors = Array.isArray(colors)
+      ? colors.map((col) => {
+          const colImgs = col.images || {};
+          return {
+            ...col,
+            images: {
+              front: colImgs.front ? getFullImageUrl(req, 'products', colImgs.front) : '',
+              side: colImgs.side ? getFullImageUrl(req, 'products', colImgs.side) : '',
+              angle: colImgs.angle ? getFullImageUrl(req, 'products', colImgs.angle) : '',
+            },
+          };
+        })
+      : [];
+
     const frameSpecifications = parseJsonField(body.frameSpecifications, {});
     const lensCompatibility = parseJsonField(body.lensCompatibility, {});
     const eyeglassesConfig = parseJsonField(body.eyeglassesConfig, null);
@@ -386,7 +410,7 @@ export const createProduct = async (req, res) => {
       category: categoryName,
       categorySlug: catSlug,
       images: imagesObj,
-      colors,
+      colors: normalizedColors,
       frameSpecifications,
       lensCompatibility,
       eyeglassesConfig,
@@ -485,10 +509,28 @@ export const updateProduct = async (req, res) => {
         if (!req.files?.angle && parsedImages.angle) imagesObj.angle = parsedImages.angle;
       }
     }
+    if (imagesObj.front) imagesObj.front = getFullImageUrl(req, 'products', imagesObj.front);
+    if (imagesObj.side) imagesObj.side = getFullImageUrl(req, 'products', imagesObj.side);
+    if (imagesObj.angle) imagesObj.angle = getFullImageUrl(req, 'products', imagesObj.angle);
     updates.images = imagesObj;
 
     // Parse complex JSON fields
-    if (updates.colors !== undefined) updates.colors = parseJsonField(updates.colors, updates.colors);
+    if (updates.colors !== undefined) {
+      const parsedColors = parseJsonField(updates.colors, updates.colors);
+      updates.colors = Array.isArray(parsedColors)
+        ? parsedColors.map((col) => {
+            const colImgs = col.images || {};
+            return {
+              ...col,
+              images: {
+                front: colImgs.front ? getFullImageUrl(req, 'products', colImgs.front) : '',
+                side: colImgs.side ? getFullImageUrl(req, 'products', colImgs.side) : '',
+                angle: colImgs.angle ? getFullImageUrl(req, 'products', colImgs.angle) : '',
+              },
+            };
+          })
+        : parsedColors;
+    }
     if (updates.frameSpecifications !== undefined) updates.frameSpecifications = parseJsonField(updates.frameSpecifications, updates.frameSpecifications);
     if (updates.lensCompatibility !== undefined) updates.lensCompatibility = parseJsonField(updates.lensCompatibility, updates.lensCompatibility);
     if (updates.eyeglassesConfig !== undefined) updates.eyeglassesConfig = parseJsonField(updates.eyeglassesConfig, updates.eyeglassesConfig);

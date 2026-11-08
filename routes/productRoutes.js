@@ -15,7 +15,7 @@ import { uploadProductImages } from '../middlewares/upload.js';
 const router = express.Router();
 
 // ============================================
-// Public / User Routes (with optional auth for wishlist detection)
+// Public / User Routes
 // ============================================
 router.get('/', optionalAuth, getProducts);
 router.get('/featured', optionalAuth, getFeaturedProducts);
