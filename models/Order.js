@@ -281,6 +281,21 @@ const orderSchema = new mongoose.Schema(
       type: prescriptionSchema,
       default: () => ({ hasPrescription: false }),
     },
+    razorpayOrderId: {
+      type: String,
+      default: '',
+      trim: true,
+      index: true,
+    },
+    razorpayPaymentId: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    razorpaySignature: {
+      type: String,
+      default: '',
+    },
     notes: {
       type: String,
       default: '',

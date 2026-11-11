@@ -462,7 +462,10 @@ export const createOrder = async (req, res) => {
  */
 export const getMyOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ user: req.user._id })
+    const orders = await Order.find({
+      user: req.user._id,
+      paymentStatus: { $ne: 'Failed' },
+    })
       .sort({ createdAt: -1 })
       .populate('items.product', 'name slug images primaryImage price offerPrice');
 

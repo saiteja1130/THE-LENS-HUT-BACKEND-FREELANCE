@@ -14,6 +14,7 @@ import productRoutes from './routes/productRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
+import paymentRoutes from './routes/paymentRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -32,7 +33,11 @@ app.use(cors({
   origin: true, // Allow frontend, mobile, and admin origins
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  },
+}));
 app.use(express.urlencoded({ extended: true }));
 
 // Normalize request URL if rewritten by serverless proxy
@@ -77,6 +82,8 @@ app.get('/api/health', (req, res) => {
 });
 
 // API Routes
+app.use('/api', paymentRoutes);
+app.use('/api/v1/payment', paymentRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/banners', bannerRoutes);
