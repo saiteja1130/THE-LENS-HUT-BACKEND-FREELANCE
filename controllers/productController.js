@@ -72,6 +72,7 @@ export const getProducts = async (req, res) => {
       categorySlug,
       productType,
       gender,
+      brand,
       shape,
       frameShape,
       frameType,
@@ -87,6 +88,11 @@ export const getProducts = async (req, res) => {
     } = req.query;
 
     const query = { status: 'active' };
+
+    // Brand filter
+    if (brand && brand !== 'All' && brand !== 'all') {
+      query.brand = new RegExp(`^${brand}$`, 'i');
+    }
 
     // Category / CategorySlug filter
     if (category && category !== 'all' && category !== 'All') {
