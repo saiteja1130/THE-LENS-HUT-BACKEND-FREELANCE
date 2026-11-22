@@ -1,6 +1,5 @@
 import express from 'express';
 import {
-  createOrder,
   getMyOrders,
   getOrderById,
   getAllOrdersAdmin,
@@ -12,7 +11,6 @@ import { protect, restrictTo, optionalAuth } from '../middlewares/auth.js';
 const router = express.Router();
 
 // Customer Endpoints
-router.post('/', optionalAuth, createOrder);
 router.get('/my-orders', protect, getMyOrders);
 
 // Admin Management Endpoints (Requires admin role)

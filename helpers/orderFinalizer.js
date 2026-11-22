@@ -4,6 +4,7 @@ import Order from '../models/Order.js';
 import Product from '../models/Product.js';
 import Cart from '../models/Cart.js';
 import PendingPayment from '../models/PendingPayment.js';
+import Coupon from '../models/Coupon.js';
 import { sendOrderConfirmationEmail } from './mailer.js';
 
 /**
@@ -339,6 +340,12 @@ export const finalizeOrderFromPayment = async (razorpayOrderId, paymentDetails =
   });
 
   const savedOrder = await newOrder.save();
+
+  if (pendingSession.orderData?.couponId) {
+    await Coupon.findByIdAndUpdate(pendingSession.orderData.couponId, { $inc: { usageCount: 1 } }).catch((error) => {
+      console.warn('[orderFinalizer] Coupon usage update warning:', error.message);
+    });
+  }
 
   // Mark pending payment as completed
   pendingSession.status = 'completed';

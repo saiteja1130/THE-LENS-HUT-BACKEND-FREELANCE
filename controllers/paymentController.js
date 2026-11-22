@@ -5,6 +5,9 @@ import Product from '../models/Product.js';
 import Order from '../models/Order.js';
 import mongoose from 'mongoose';
 import { finalizeOrderFromPayment } from '../helpers/orderFinalizer.js';
+import Coupon from '../models/Coupon.js';
+import { calculateCouponDiscount } from '../helpers/couponPricing.js';
+import { calculateConfiguredUnitPrice } from '../helpers/productPricing.js';
 
 /**
  * Lazy initializer for Razorpay SDK client using environment variables
@@ -61,7 +64,8 @@ export const createRazorpayOrder = async (req, res) => {
       if (!product || product.stock < quantity) {
         return res.status(400).json({ success: false, message: 'A product is unavailable or has insufficient stock.', errorCode: 'PRODUCT_UNAVAILABLE' });
       }
-      const unitPrice = product.offerPrice > 0 ? product.offerPrice : product.price;
+      const configuration = item.configuration || {};
+      const unitPrice = calculateConfiguredUnitPrice(product, configuration);
       subtotal += unitPrice * quantity;
       pricedItems.push({
         ...item,
@@ -72,11 +76,21 @@ export const createRazorpayOrder = async (req, res) => {
         unitPrice,
         price: unitPrice,
         totalPrice: unitPrice * quantity,
-        configuration: item.configuration || {},
+        configuration,
       });
     }
-    const shipping = orderData.shippingMethod === 'express' ? 149 : (subtotal >= 999 ? 0 : 99);
-    const total = subtotal + shipping;
+    const couponCode = String(orderData.couponCode || '').trim().toUpperCase();
+    let coupon = null;
+    let discount = 0;
+    if (couponCode) {
+      coupon = await Coupon.findOne({ code: couponCode });
+      if (!coupon) return res.status(400).json({ success: false, message: 'Coupon code is invalid.' });
+      const validation = calculateCouponDiscount(coupon, pricedItems, subtotal);
+      if (!validation.success) return res.status(400).json({ success: false, message: validation.message });
+      discount = validation.discountAmount;
+    }
+    const shipping = subtotal >= 999 ? 0 : 99;
+    const total = Math.max(0, subtotal - discount + shipping);
     const numericAmount = Math.round(total * 100);
     if (!Number.isSafeInteger(numericAmount) || numericAmount < 100) {
       return res.status(400).json({ success: false, message: 'The calculated order total is invalid.', errorCode: 'INVALID_AMOUNT' });
@@ -124,8 +138,10 @@ export const createRazorpayOrder = async (req, res) => {
         ...orderData,
         items: pricedItems,
         subtotal,
-        discount: 0,
-        discountAmount: 0,
+        discount,
+        discountAmount: discount,
+        couponCode,
+        couponId: coupon?._id || null,
         shipping,
         shippingFee: shipping,
         total,
@@ -140,6 +156,10 @@ export const createRazorpayOrder = async (req, res) => {
       order_id: rzpOrder.id,
       amount: rzpOrder.amount,
       currency: rzpOrder.currency,
+      subtotal,
+      discount,
+      shipping,
+      total,
     });
   } catch (error) {
     console.error('[paymentController createRazorpayOrder]:', error);
