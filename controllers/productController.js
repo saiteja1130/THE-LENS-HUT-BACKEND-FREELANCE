@@ -98,7 +98,8 @@ export const getProducts = async (req, res) => {
     // Category / CategorySlug filter
     if (category && category !== 'all' && category !== 'All') {
       const catRegex = new RegExp(`^${escapeRegex(category)}$`, 'i');
-      query.$or = [{ category: catRegex }, { categorySlug: category.toLowerCase() }];
+      query.$and = query.$and || [];
+      query.$and.push({ $or: [{ category: catRegex }, { categorySlug: category.toLowerCase() }] });
     } else if (categorySlug && categorySlug !== 'all') {
       query.categorySlug = categorySlug.toLowerCase();
     }
@@ -110,7 +111,9 @@ export const getProducts = async (req, res) => {
 
     // Gender filter
     if (gender && gender !== 'All' && gender !== 'all') {
-      query.gender = new RegExp(`^${gender}$`, 'i');
+      const genderRegex = new RegExp(`^${escapeRegex(gender)}$`, 'i');
+      query.$and = query.$and || [];
+      query.$and.push({ $or: [{ gender: genderRegex }, { gender: /^unisex$/i }] });
     }
 
     // Frame Shape filter
@@ -147,12 +150,18 @@ export const getProducts = async (req, res) => {
     // Text search on name, brand, description, sku
     if (search && search.trim()) {
       const searchRegex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-      query.$or = [
+      query.$and = query.$and || [];
+      query.$and.push({ $or: [
         { name: searchRegex },
         { brand: searchRegex },
         { sku: searchRegex },
         { description: searchRegex },
-      ];
+        { category: searchRegex },
+        { categorySlug: searchRegex },
+        { 'frameSpecifications.shape': searchRegex },
+        { 'frameSpecifications.frameType': searchRegex },
+        { 'frameSpecifications.material': searchRegex },
+      ] });
     }
 
     // Sorting
@@ -175,6 +184,7 @@ export const getProducts = async (req, res) => {
         sortOptions = { isBestSeller: -1, isFeatured: -1, rating: -1 };
         break;
     }
+    sortOptions._id = 1;
 
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10)));
