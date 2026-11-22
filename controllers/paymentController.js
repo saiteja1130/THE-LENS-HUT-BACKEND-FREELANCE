@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import PendingPayment from '../models/PendingPayment.js';
+import Product from '../models/Product.js';
+import Order from '../models/Order.js';
+import mongoose from 'mongoose';
 import { finalizeOrderFromPayment } from '../helpers/orderFinalizer.js';
 
 /**
@@ -27,7 +30,7 @@ const getRazorpayInstance = () => {
  */
 export const createRazorpayOrder = async (req, res) => {
   try {
-    const { amount, currency = 'INR', receipt, orderData = {} } = req.body;
+    const { receipt, orderData = {} } = req.body;
 
     // Check credentials presence
     if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
@@ -38,14 +41,45 @@ export const createRazorpayOrder = async (req, res) => {
       });
     }
 
-    // Validate amount (must be in paise, minimum 100 paise = 1 INR)
-    const numericAmount = Math.round(Number(amount));
-    if (isNaN(numericAmount) || numericAmount < 100) {
+    if (!Array.isArray(orderData.items) || orderData.items.length === 0 || !orderData.shippingAddress) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid amount. Minimum amount is 100 paise (₹1.00).',
-        errorCode: 'INVALID_AMOUNT',
+        message: 'Order items and a shipping address are required.',
+        errorCode: 'INVALID_ORDER_DATA',
       });
+    }
+
+    let subtotal = 0;
+    const pricedItems = [];
+    for (const item of orderData.items) {
+      const quantity = Number(item.quantity);
+      const productId = item.productId || item.id || item.product?._id || item.product;
+      if (!Number.isSafeInteger(quantity) || quantity < 1 || !mongoose.Types.ObjectId.isValid(productId)) {
+        return res.status(400).json({ success: false, message: 'Order contains an invalid product or quantity.', errorCode: 'INVALID_ORDER_ITEM' });
+      }
+      const product = await Product.findOne({ _id: productId, status: 'active' });
+      if (!product || product.stock < quantity) {
+        return res.status(400).json({ success: false, message: 'A product is unavailable or has insufficient stock.', errorCode: 'PRODUCT_UNAVAILABLE' });
+      }
+      const unitPrice = product.offerPrice > 0 ? product.offerPrice : product.price;
+      subtotal += unitPrice * quantity;
+      pricedItems.push({
+        ...item,
+        productId: product._id.toString(),
+        id: product._id.toString(),
+        name: product.name,
+        quantity,
+        unitPrice,
+        price: unitPrice,
+        totalPrice: unitPrice * quantity,
+        configuration: item.configuration || {},
+      });
+    }
+    const shipping = orderData.shippingMethod === 'express' ? 149 : (subtotal >= 999 ? 0 : 99);
+    const total = subtotal + shipping;
+    const numericAmount = Math.round(total * 100);
+    if (!Number.isSafeInteger(numericAmount) || numericAmount < 100) {
+      return res.status(400).json({ success: false, message: 'The calculated order total is invalid.', errorCode: 'INVALID_AMOUNT' });
     }
 
     const razorpay = getRazorpayInstance();
@@ -59,7 +93,7 @@ export const createRazorpayOrder = async (req, res) => {
 
     const options = {
       amount: numericAmount,
-      currency: currency || 'INR',
+      currency: 'INR',
       receipt: receipt || `rcpt_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
       notes: {
         userId: req.user ? req.user._id.toString() : 'guest',
@@ -88,6 +122,14 @@ export const createRazorpayOrder = async (req, res) => {
       status: 'pending',
       orderData: {
         ...orderData,
+        items: pricedItems,
+        subtotal,
+        discount: 0,
+        discountAmount: 0,
+        shipping,
+        shippingFee: shipping,
+        total,
+        totalAmount: total,
         userId: req.user ? req.user._id : null,
       },
       user: req.user ? req.user._id : null,
@@ -163,6 +205,19 @@ export const verifyRazorpayPayment = async (req, res) => {
         message: 'Payment signature verification failed. Transaction cannot be validated.',
         errorCode: 'INVALID_SIGNATURE',
       });
+    }
+
+    const pendingPayment = await PendingPayment.findOne({ razorpayOrderId: razorpay_order_id });
+    if (!pendingPayment) {
+      return res.status(404).json({ success: false, message: 'Payment order was not found.', errorCode: 'PAYMENT_ORDER_NOT_FOUND' });
+    }
+    const existingOrder = await Order.findOne({ razorpayOrderId: razorpay_order_id });
+    if (!existingOrder) {
+      const razorpay = getRazorpayInstance();
+      const payment = await razorpay.payments.fetch(razorpay_payment_id);
+      if (payment.order_id !== razorpay_order_id || payment.status !== 'captured' || payment.amount !== pendingPayment.amount || payment.currency !== pendingPayment.currency) {
+        return res.status(400).json({ success: false, message: 'Payment is not captured for the expected amount and currency.', errorCode: 'PAYMENT_NOT_CAPTURED' });
+      }
     }
 
     // Signatures match! Finalize the order atomically in the database

@@ -88,15 +88,16 @@ export const getProducts = async (req, res) => {
     } = req.query;
 
     const query = { status: 'active' };
+    const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     // Brand filter
     if (brand && brand !== 'All' && brand !== 'all') {
-      query.brand = new RegExp(`^${brand}$`, 'i');
+      query.brand = new RegExp(`^${escapeRegex(brand)}$`, 'i');
     }
 
     // Category / CategorySlug filter
     if (category && category !== 'all' && category !== 'All') {
-      const catRegex = new RegExp(`^${category}$`, 'i');
+      const catRegex = new RegExp(`^${escapeRegex(category)}$`, 'i');
       query.$or = [{ category: catRegex }, { categorySlug: category.toLowerCase() }];
     } else if (categorySlug && categorySlug !== 'all') {
       query.categorySlug = categorySlug.toLowerCase();
@@ -145,7 +146,7 @@ export const getProducts = async (req, res) => {
 
     // Text search on name, brand, description, sku
     if (search && search.trim()) {
-      const searchRegex = new RegExp(search.trim(), 'i');
+      const searchRegex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       query.$or = [
         { name: searchRegex },
         { brand: searchRegex },
@@ -217,13 +218,13 @@ export const getProductByIdOrSlug = async (req, res) => {
 
     let product = null;
     if (idOrSlug.match(/^[0-9a-fA-F]{24}$/)) {
-      product = await Product.findById(idOrSlug);
+      product = await Product.findOne({ _id: idOrSlug, status: 'active' });
     }
     if (!product) {
-      product = await Product.findOne({ slug: idOrSlug.toLowerCase() });
+      product = await Product.findOne({ slug: idOrSlug.toLowerCase(), status: 'active' });
     }
     if (!product) {
-      product = await Product.findOne({ sku: idOrSlug.toUpperCase() });
+      product = await Product.findOne({ sku: idOrSlug.toUpperCase(), status: 'active' });
     }
 
     if (!product) {
@@ -256,7 +257,7 @@ export const getProductByIdOrSlug = async (req, res) => {
  */
 export const getFeaturedProducts = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit, 10) || 5;
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 5));
     const products = await Product.find({
       status: 'active',
       $or: [{ isFeatured: true }, { isBestSeller: true }],
@@ -554,6 +555,12 @@ export const updateProduct = async (req, res) => {
       new: true,
       runValidators: true,
     });
+
+    const affectedCategorySlugs = new Set([product.categorySlug, updated.categorySlug].filter(Boolean));
+    for (const categorySlug of affectedCategorySlugs) {
+      const itemCount = await Product.countDocuments({ categorySlug });
+      await Category.updateOne({ slug: categorySlug }, { $set: { itemCount } });
+    }
 
     res.status(200).json({
       success: true,

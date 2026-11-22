@@ -16,7 +16,8 @@ export const uploadImage = async (req, res) => {
       });
     }
 
-    const folder = (req.query?.folder || req.body?.folder || 'general').toLowerCase();
+    const requestedFolder = (req.query?.folder || req.body?.folder || 'general').toLowerCase();
+    const folder = ['products', 'categories', 'banners', 'brands', 'general'].includes(requestedFolder) ? requestedFolder : 'general';
     const fullUrl = getFullImageUrl(req, folder, req.file.filename);
 
     return res.status(200).json({

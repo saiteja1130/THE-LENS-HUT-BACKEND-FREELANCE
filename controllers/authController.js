@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { sendEmailVerificationOTP, sendLoginOTP } from '../helpers/mailer.js';
@@ -6,7 +7,7 @@ import { sendEmailVerificationOTP, sendLoginOTP } from '../helpers/mailer.js';
  * Generate 6-digit numeric OTP
  */
 const generateNumericOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 1000000).toString();
 };
 
 /**
@@ -149,14 +150,10 @@ export const verifyEmail = async (req, res) => {
     }
 
     if (user.isEmailVerified) {
-      const token = generateToken(user);
       return res.status(200).json({
         success: true,
-        message: 'Email is already verified. You are logged in.',
-        data: {
-          token,
-          user: formatUserResponse(user),
-        },
+        message: 'Email is already verified. Please sign in.',
+        errorCode: 'ALREADY_VERIFIED',
       });
     }
 

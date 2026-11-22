@@ -16,7 +16,7 @@ export const baseUploadDir = isServerless
   : path.join(process.cwd(), 'uploads');
 
 // Ensure base and standard subdirectories exist
-const subdirs = ['products', 'categories', 'banners', 'general', 'prescriptions'];
+const subdirs = ['products', 'categories', 'banners', 'brands', 'general', 'prescriptions'];
 subdirs.forEach((dir) => {
   const fullPath = path.join(baseUploadDir, dir);
   try {

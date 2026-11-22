@@ -12,6 +12,8 @@ const slugify = (text) => {
     .replace(/\-\-+/g, '-');
 };
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
  * @route   GET /api/v1/brands
  * @desc    Get active brands for public display (Web & Mobile)
@@ -32,7 +34,7 @@ export const getActiveBrands = async (req, res) => {
       brands.map(async (b) => {
         const count = await Product.countDocuments({
           status: 'active',
-          brand: new RegExp(`^${b.name}$`, 'i'),
+          brand: new RegExp(`^${escapeRegex(b.name)}$`, 'i'),
         });
         const brandObj = b.toJSON();
         brandObj.itemCount = count;
@@ -66,7 +68,7 @@ export const getAllBrandsAdmin = async (req, res) => {
     const brandsWithCounts = await Promise.all(
       brands.map(async (b) => {
         const count = await Product.countDocuments({
-          brand: new RegExp(`^${b.name}$`, 'i'),
+          brand: new RegExp(`^${escapeRegex(b.name)}$`, 'i'),
         });
         const brandObj = b.toJSON();
         brandObj.itemCount = count;
@@ -115,7 +117,7 @@ export const getBrandByIdOrSlug = async (req, res) => {
 
     const count = await Product.countDocuments({
       status: 'active',
-      brand: new RegExp(`^${brand.name}$`, 'i'),
+      brand: new RegExp(`^${escapeRegex(brand.name)}$`, 'i'),
     });
 
     const brandData = brand.toJSON();
@@ -233,8 +235,10 @@ export const updateBrand = async (req, res) => {
           errorCode: 'DUPLICATE_BRAND',
         });
       }
+      const previousName = brand.name;
       brand.name = name.trim();
       brand.slug = slug;
+      await Product.updateMany({ brand: previousName }, { $set: { brand: brand.name } });
     }
 
     if (req.file) {
@@ -320,7 +324,7 @@ export const deleteBrand = async (req, res) => {
 
     // Check if products exist for this brand
     const assignedCount = await Product.countDocuments({
-      brand: new RegExp(`^${brand.name}$`, 'i'),
+      brand: new RegExp(`^${escapeRegex(brand.name)}$`, 'i'),
     });
 
     if (assignedCount > 0) {

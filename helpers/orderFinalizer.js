@@ -195,7 +195,10 @@ export const finalizeOrderFromPayment = async (razorpayOrderId, paymentDetails =
   const stockUpdates = [];
 
   for (const rawItem of items) {
-    const quantity = Math.max(1, Number(rawItem.quantity) || 1);
+    const quantity = Number(rawItem.quantity);
+    if (!Number.isSafeInteger(quantity) || quantity < 1) {
+      throw new Error('INVALID_QUANTITY: Item quantity must be a positive whole number');
+    }
     const targetId =
       rawItem.productId ||
       rawItem.id ||

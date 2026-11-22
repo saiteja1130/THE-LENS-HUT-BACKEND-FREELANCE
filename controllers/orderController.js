@@ -226,7 +226,10 @@ export const createOrder = async (req, res) => {
     const stockUpdates = [];
 
     for (const rawItem of items) {
-      const quantity = Math.max(1, Number(rawItem.quantity) || 1);
+      const quantity = Number(rawItem.quantity);
+      if (!Number.isSafeInteger(quantity) || quantity < 1) {
+        return res.status(400).json({ success: false, message: 'Item quantity must be a positive whole number.', errorCode: 'INVALID_QUANTITY' });
+      }
 
       const targetId =
         rawItem.productId ||
@@ -242,7 +245,7 @@ export const createOrder = async (req, res) => {
       }
 
       const productDoc = await Product.findById(targetId);
-      if (!productDoc || productDoc.status === 'archived') {
+      if (!productDoc || productDoc.status !== 'active') {
         return res.status(400).json({
           success: false,
           message: `Product "${rawItem.name || targetId}" is not available or does not exist.`,
@@ -629,7 +632,7 @@ export const getAllOrdersAdmin = async (req, res) => {
     }
 
     if (search && search.trim()) {
-      const q = search.trim();
+      const q = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       filter.$or = [
         { orderNumber: { $regex: q, $options: 'i' } },
         { 'customer.name': { $regex: q, $options: 'i' } },
@@ -656,7 +659,7 @@ export const getAllOrdersAdmin = async (req, res) => {
       Order.countDocuments({ orderStatus: 'Delivered' }),
       Order.countDocuments({ orderStatus: 'Cancelled' }),
       Order.aggregate([
-        { $match: { orderStatus: { $ne: 'Cancelled' } } },
+        { $match: { paymentStatus: 'Paid', orderStatus: { $ne: 'Cancelled' } } },
         { $group: { _id: null, totalRevenue: { $sum: '$totalAmount' } } },
       ]),
     ]);
@@ -669,7 +672,7 @@ export const getAllOrdersAdmin = async (req, res) => {
 
     if (page && limit) {
       const p = Math.max(1, parseInt(page, 10));
-      const l = Math.max(1, parseInt(limit, 10));
+      const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
       query = query.skip((p - 1) * l).limit(l);
     }
 
@@ -737,6 +740,14 @@ export const updateOrderStatusAdmin = async (req, res) => {
 
     const previousStatus = order.orderStatus;
 
+    if (previousStatus === status) {
+      return res.status(200).json({ success: true, message: 'Order already has the requested status.', data: order });
+    }
+
+    if (previousStatus === 'Cancelled') {
+      return res.status(409).json({ success: false, message: 'Cancelled orders cannot be reopened. Create a replacement order instead.', errorCode: 'CANCELLED_ORDER_TERMINAL' });
+    }
+
     // Automated Stock Restoration on Cancellation
     if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
       for (const item of order.items) {
@@ -747,19 +758,6 @@ export const updateOrderStatusAdmin = async (req, res) => {
         } else if (item.productId && mongoose.Types.ObjectId.isValid(item.productId)) {
           await Product.findByIdAndUpdate(item.productId, {
             $inc: { stock: item.quantity },
-          });
-        }
-      }
-    } else if (previousStatus === 'Cancelled' && status !== 'Cancelled') {
-      // Re-deduct stock if un-cancelling
-      for (const item of order.items) {
-        if (item.product) {
-          await Product.findByIdAndUpdate(item.product, {
-            $inc: { stock: -item.quantity },
-          });
-        } else if (item.productId && mongoose.Types.ObjectId.isValid(item.productId)) {
-          await Product.findByIdAndUpdate(item.productId, {
-            $inc: { stock: -item.quantity },
           });
         }
       }

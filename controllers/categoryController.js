@@ -290,7 +290,7 @@ export const toggleCategory = async (req, res) => {
  */
 export const deleteCategory = async (req, res) => {
   try {
-    const category = await Category.findByIdAndDelete(req.params.id);
+    const category = await Category.findById(req.params.id);
 
     if (!category) {
       return res.status(404).json({
@@ -299,6 +299,13 @@ export const deleteCategory = async (req, res) => {
         errorCode: 'NOT_FOUND',
       });
     }
+
+    const Product = (await import('../models/Product.js')).default;
+    const assignedProducts = await Product.countDocuments({ categorySlug: category.slug });
+    if (assignedProducts > 0) {
+      return res.status(409).json({ success: false, message: `Cannot delete a category with ${assignedProducts} assigned products.`, errorCode: 'CATEGORY_IN_USE' });
+    }
+    await category.deleteOne();
 
     return res.status(200).json({
       success: true,

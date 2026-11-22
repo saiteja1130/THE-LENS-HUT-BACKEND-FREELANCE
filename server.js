@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import os from 'os';
+import mongoose from 'mongoose';
 import connectDB from './configs/db.js';
 
 // Route imports
@@ -62,6 +63,13 @@ const uploadStaticDir = isServerless
   ? path.join(os.tmpdir(), 'uploads')
   : path.join(process.cwd(), 'uploads');
 
+app.use('/uploads/prescriptions', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Prescription files are not publicly accessible.',
+    errorCode: 'PRIVATE_FILE',
+  });
+});
 app.use('/uploads', express.static(uploadStaticDir));
 
 
@@ -75,9 +83,10 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Health Check
 app.get('/api/health', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'The Lens Hut API server is active and healthy',
+  const databaseReady = mongoose.connection.readyState === 1;
+  res.status(databaseReady ? 200 : 503).json({
+    success: databaseReady,
+    message: databaseReady ? 'The Lens Hut API server is active and healthy' : 'Database connection is unavailable',
     timestamp: new Date().toISOString(),
   });
 });
