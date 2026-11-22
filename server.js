@@ -18,6 +18,7 @@ import uploadRoutes from './routes/uploadRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import brandRoutes from './routes/brandRoutes.js';
 import couponRoutes from './routes/couponRoutes.js';
+import shippingSettingsRoutes from './routes/shippingSettingsRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -101,6 +102,7 @@ app.use('/api/v1/banners', bannerRoutes);
 app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/brands', brandRoutes);
 app.use('/api/v1/coupons', couponRoutes);
+app.use('/api/v1/settings', shippingSettingsRoutes);
 app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/cart', cartRoutes);
 app.use('/api/v1/orders', orderRoutes);

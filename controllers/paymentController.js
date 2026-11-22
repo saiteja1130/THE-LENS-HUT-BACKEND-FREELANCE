@@ -8,6 +8,7 @@ import { finalizeOrderFromPayment } from '../helpers/orderFinalizer.js';
 import Coupon from '../models/Coupon.js';
 import { calculateCouponDiscount } from '../helpers/couponPricing.js';
 import { calculateConfiguredUnitPrice } from '../helpers/productPricing.js';
+import { calculateShippingFee, getShippingSettings } from '../helpers/shippingPricing.js';
 
 /**
  * Lazy initializer for Razorpay SDK client using environment variables
@@ -89,7 +90,8 @@ export const createRazorpayOrder = async (req, res) => {
       if (!validation.success) return res.status(400).json({ success: false, message: validation.message });
       discount = validation.discountAmount;
     }
-    const shipping = subtotal >= 999 ? 0 : 99;
+    const shippingSettings = await getShippingSettings();
+    const shipping = calculateShippingFee(subtotal, shippingSettings);
     const total = Math.max(0, subtotal - discount + shipping);
     const numericAmount = Math.round(total * 100);
     if (!Number.isSafeInteger(numericAmount) || numericAmount < 100) {
